@@ -1,0 +1,372 @@
+from datetime import datetime
+from datetime import timedelta
+from functools import partial
+
+from airflow import DAG
+from airflow.operators.python import PythonOperator
+
+from dags.lib import email
+from dags.lib import presto
+
+DAG_OWNER = 'pramit.chakraborty@razorpay.com
+
+default_args = {
+    'owner': DAG_OWNER,
+    'start_date': datetime(2023, 10, 23),
+    'on_failure_callback': partial(email.send_mail_slack, ['pramit.chakraborty@razorpay.com','anjon.bagrodia@razorpay.com']),
+    'retries': 5,
+    'retry_delay': timedelta(seconds=300),
+
+
+}
+
+dag = DAG(
+    'rx_recon_alert',
+    tags=['presto'],
+    default_args=default_args,
+    schedule_interval='40 06 * * *',
+    catchup=False,
+)
+
+sql1 = """
+Use ;
+drop table if exists hive.aggregate_ba.rx_recon_alert;
+CREATE TABLE hive.aggregate_ba.rx_recon_alert (
+
+type VARCHAR,
+payout_id VARCHAR,
+record_id VARCHAR,
+payout_channel VARCHAR,
+payout_channel_identifier VARCHAR,
+payout_amount VARCHAR,
+bank_id VARCHAR,
+recon_against_record_id VARCHAR,
+bank_channel VARCHAR,
+bank_channel_identifier VARCHAR,
+bank_amount ,
+success_count INT,
+balance_id VARCHAR,
+x_loading_amount INT,
+narration VARCHAR,
+transaction_date VARCHAR,
+workspace VARCHAR,
+sub_channel VARCHAR,
+fts_attempt_id VARCHAR,
+fts_status VARCHAR,
+fts_created_date VARCHAR,
+fts_amount DOUBLE,
+debit_count bigint,
+credit_count bigint,
+utr VARCHAR 
+)
+WITH (
+   format = 'PARQUET'
+);
+Insert into hive.aggregate_ba.rx_recon_alert
+WITH ConsolidatedQuery AS (
+  -- Query 1
+  SELECT
+    'payout' AS type,
+    r1.rzp_entity_id AS payout_id,
+    r1.id AS record_id,
+    r1.channel AS payout_channel,
+    r1.channel_identifier AS payout_channel_identifier,
+    r1.absolute_amount AS payout_amount,
+    r2.rzp_entity_id AS bank_id,
+    r2.id AS recon_against_record_id,
+    r2.channel AS bank_channel,
+    r2.channel_identifier AS bank_channel_identifier,
+    r2.absolute_amount AS bank_amount,
+    NULL AS success_count,
+    NULL AS balance_id,
+    NULL AS x_loading_amount,
+    NULL AS narration,
+    NULL AS transaction_date,
+    NULL AS workspace,
+    NULL AS sub_channel,
+    NULL AS fts_attempt_id,
+    NULL AS fts_status,
+    NULL AS fts_utr,
+    NULL AS fts_created_date,
+    NULL AS fts_amount,
+    NULL AS debit_count,
+    NULL AS credit_count,
+    NULL AS utr  
+  FROM realtime_prod_rx_recon.recon_result AS rr
+  INNER JOIN realtime_prod_rx_recon.record AS r1 ON rr.record_id = r1.id
+  INNER JOIN realtime_prod_rx_recon.record AS r2 ON rr.recon_against_record_id = r2.id
+  WHERE r1.id IN (
+    SELECT id
+    FROM realtime_prod_rx_recon.record
+    WHERE source_id IN (
+      SELECT id
+      FROM realtime_recon.file_types
+      WHERE name = 'payouts'
+    )
+    AND created_date = CAST(DATE_ADD('day', -1, CURRENT_DATE) AS VARCHAR)
+  )
+  AND CAST(r1.absolute_amount AS DECIMAL(13, 2)) != CAST(r2.absolute_amount AS DECIMAL(13, 2))
+   -- AND r1.absolute_amount  != r2.absolute_amount )
+UNION ALL
+
+  -- Query 1 (Continued)
+  SELECT
+    'payout' AS type,
+    JSON_EXTRACT_SCALAR(original_row, '$.payout_id') AS payout_id,
+    NULL AS record_id,
+    NULL AS payout_channel,
+    NULL AS payout_channel_identifier,
+    absolute_amount  AS payout_amount,
+    JSON_EXTRACT_SCALAR(original_row, '$.balance_id') AS balance_id,
+    NULL AS bank_id,
+    NULL AS recon_against_record_id,
+    NULL AS bank_channel,
+    NULL AS bank_channel_identifier,
+    NULL AS bank_amount,
+    NULL AS success_count,
+    NULL AS bank_transfers_id,
+    NULL AS x_loading_amount,
+    narration,
+    NULL AS transaction_date,
+    NULL AS workspace,
+    NULL AS sub_channel,
+    NULL AS fts_attempt_id,
+    NULL AS fts_status,
+    NULL AS fts_utr,
+    NULL AS fts_created_date,
+    NULL AS fts_amount,
+    NULL AS debit_count,
+    NULL AS credit_count
+  FROM realtime_prod_rx_recon.record
+  WHERE
+    (
+      source_id IN ('G865ZX0C9x02Bf') OR
+      source_id = 'G86BOakJuJ0CQd'
+    )
+    AND (
+      (source_id IN ('G865ZX0C9x02Bf') AND created_date = CAST(DATE_ADD('day', -1,CURRENT_DATE) AS VARCHAR)) OR
+      (source_id = 'G86BOakJuJ0CQd' AND created_date >= CAST(DATE_ADD('day', -10,CURRENT_DATE) AS VARCHAR))
+    )
+    AND channel_identifier != 'error' AND channel_identifier > '' AND channel_identifier != 'None'
+
+  UNION ALL
+
+  -- Query 1 (Continued)
+  SELECT
+    'payout' AS type,
+    JSON_EXTRACT_SCALAR(original_row, '$.payout_id') AS payout_id,
+    NULL AS record_id,
+    NULL AS payout_channel,
+    NULL AS payout_channel_identifier,
+    absolute_amount  AS payout_amount,
+    JSON_EXTRACT_SCALAR(original_row, '$.balance_id') AS balance_id,
+    narration,
+    NULL AS bank_id,
+    NULL AS recon_against_record_id,
+    NULL AS bank_channel,
+    NULL AS bank_channel_identifier,
+    NULL AS bank_amount,
+    NULL AS success_count,
+    NULL AS bank_transfers_id,
+    NULL AS x_loading_amount,
+    NULL AS transaction_date,
+    NULL AS workspace,
+    NULL AS sub_channel,
+    NULL AS fts_attempt_id,
+    NULL AS fts_status,
+    NULL AS fts_utr,
+    NULL AS fts_created_date,
+    NULL AS fts_amount,
+    NULL AS debit_count,
+    NULL AS credit_count
+  FROM realtime_prod_rx_recon.record
+  WHERE
+    (
+      source_id IN ('J8CT32Qu2N0ISf') OR
+      source_id = 'J8CUnB7VeX02eP'
+    )
+    AND (
+      (source_id IN ('J8CT32Qu2N0ISf') AND created_date = CAST(DATE_ADD('day', -1,CURRENT_DATE) AS VARCHAR)) OR
+      (source_id = 'J8CUnB7VeX02eP' AND created_date >= CAST(DATE_ADD('day', -10,CURRENT_DATE) AS VARCHAR))
+    )
+    AND channel_identifier != 'error' AND channel_identifier > '' AND channel_identifier != 'None'
+
+  UNION ALL
+
+  -- Query 1 (Continued)
+  SELECT
+    'payout' AS type,
+    NULL AS payout_id,
+    NULL AS record_id,
+    NULL AS payout_channel,
+    NULL AS payout_channel_identifier,
+    NULL AS payout_amount,
+    NULL AS bank_id,
+    NULL AS recon_against_record_id,
+    NULL AS bank_channel,
+    NULL AS bank_channel_identifier,
+    NULL AS bank_amount,
+    NULL AS success_count,
+    JSON_EXTRACT_SCALAR(original_row, '$.fts_attempt_id') AS fts_attempt_id,
+    JSON_EXTRACT_SCALAR(original_row, '$.fts_status') AS fts_status,
+    JSON_EXTRACT_SCALAR(original_row, '$.fts_utr') AS fts_utr,
+    JSON_EXTRACT_SCALAR(original_row, '$.fts_created_date') AS fts_created_date,
+    JSON_EXTRACT_SCALAR(original_row, '$.fts_amount') AS fts_amount,
+    NULL AS balance_id,
+    NULL AS x_loading_amount,
+    NULL AS narration,
+    NULL AS transaction_date,
+    NULL AS sub_channel,
+    NULL AS debit_count,
+    NULL AS credit_count,
+    NULL AS utr,
+    NULL AS workspace
+  FROM realtime_prod_rx_recon.record AS bank_record
+  INNER JOIN (
+    SELECT
+      record_id,
+      recon_against_record_id,
+      fts_attempt_id,
+      workspace,
+      fts_utr,
+      fts_created_date,
+      fts_amount
+    FROM realtime_prod_rx_recon.recon_result AS recon_result
+    JOIN (
+      SELECT
+        id,
+        rzp_entity_id AS fts_attempt_id,
+        channel AS workspace,
+        channel_identifier AS fts_utr,
+        transaction_date AS fts_created_date,
+        absolute_amount AS fts_amount,
+        JSON_EXTRACT_SCALAR(original_row, '$.payout_id') AS payout_id
+      FROM realtime_prod_rx_recon.record
+      WHERE source_id IN (
+        SELECT
+          ft.id
+        FROM realtime_recon.file_types AS ft
+        WHERE ft.NAME = 'payouts'
+      )
+      AND created_date <= CAST(DATE_ADD('day', -7,CURRENT_DATE) AS VARCHAR)
+      AND created_date >= CAST(DATE_ADD('day', -37,CURRENT_DATE) AS VARCHAR)
+      AND record_status = 'REVERSED'
+    ) AS failed_payouts ON failed_payouts.id = recon_result.recon_against_record_id
+    AND recon_result.created_date >= CAST(DATE_ADD('DAY', -60,CURRENT_DATE) AS VARCHAR)
+  ) AS bank_rows ON bank_rows.record_id = bank_record.id
+  WHERE bank_record.created_date >= CAST(DATE_ADD('day', -37,CURRENT_DATE) AS VARCHAR)
+),
+
+SecondQuery AS (
+  -- Query 2
+  SELECT
+    cast(rx_recon_records.transaction_date as date)  AS transaction_date,
+    rx_recon_records.channel  AS channel,
+    rx_recon_records.sub_channel  AS sub_channel,
+    rx_recon_records.type  AS type,
+    rx_recon_records.rzp_entity_id  AS rzp_entity_id,
+    rx_recon_records.payout_id  AS payout_id,
+    rx_recon_records.channel_identifier  AS channel_identifier,
+    rx_recon_records.mode  AS mode,
+    rx_recon_records.fts_attempt_id  AS fts_attempt_id,
+    rx_recon_records.final_status  AS final_status,
+    rx_recon_records.absolute_amount  AS absolute_amount
+  FROM aggregate_ba.rx_recon_records  AS rx_recon_records
+  WHERE (case when rx_recon_records.channel in ('ICICI_DIRECT','RX_AmazonPay','RBL','RBL_DIRECT')
+        then 'Direct Account' else 'Pool Account' end) = 'Pool Account' AND 
+        cast(transaction_date as date) >= date_trunc('month', CURRENT_DATE)
+        AND (((( rx_recon_records.final_status = 'Unreconciled') OR 
+        ( rx_recon_records.final_status = 'Failed')) OR  rx_recon_records.final_status IS NULL) 
+        OR ((UPPER( rx_recon_records.type) = 'DEBIT') AND ( rx_recon_records.final_status = 'Reversed')))
+),
+
+ConsolidatedResult AS (
+  SELECT
+    cq.type AS type,
+    cq.payout_id AS payout_id,
+    cq.record_id AS record_id,
+    cq.payout_channel AS payout_channel,
+    cq.payout_channel_identifier AS payout_channel_identifier,
+    cq.payout_amount AS payout_amount,
+    cq.bank_id AS bank_id,
+    cq.recon_against_record_id AS recon_against_record_id,
+    cq.bank_channel AS bank_channel,
+    cq.bank_channel_identifier AS bank_channel_identifier,
+    cq.bank_amount AS bank_amount,
+    cq.success_count AS success_count,
+    cq.balance_id AS balance_id,
+    cq.x_loading_amount AS x_loading_amount,
+    cq.narration AS narration,
+    sq.transaction_date AS transaction_date,
+    cq.workspace AS workspace,
+    sq.sub_channel AS sub_channel,
+    cq.fts_attempt_id AS fts_attempt_id,
+    cq.fts_status AS fts_status,
+    cq.fts_utr AS fts_utr,
+    cq.fts_created_date AS fts_created_date,
+    cq.fts_amount AS fts_amount,
+    cq.debit_count AS debit_count,
+    cq.credit_count AS credit_count,
+    cq.utr AS utr
+  FROM ConsolidatedQuery AS cq
+  LEFT JOIN SecondQuery AS sq ON cq.payout_id = sq.payout_id
+)
+
+SELECT * FROM ConsolidatedResult
+WHERE (
+    (
+      (type = 'DEBIT' AND debit_count = 1 AND credit_count = 0)
+      OR
+      (type = 'CREDIT' AND debit_count = 0 AND credit_count = 1)
+    )
+    OR
+    (type != 'DEBIT' AND type != 'CREDIT')
+  )
+  AND workspace NOT IN ('ICICI_DIRECT', 'RX_AmazonPay', 'RBL', 'RBL_DIRECT');
+
+
+
+  
+ 
+  
+"""
+presto_task1 = PythonOperator(
+    task_id='ExecutePrestoQuery1',
+    python_callable=presto.execute_presto_query_cli,
+    op_kwargs={'query': sql1, 'user': DAG_OWNER},
+    dag=dag,
+)
+
+presto_task1
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
